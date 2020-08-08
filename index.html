@@ -1,0 +1,200 @@
+<html>
+  <head>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.7/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="data:image/x-icon;base64,AAABAAEAEBAQAAEABAAoAQAAFgAAACgAAAAQAAAAIAAAAAEABAAAAAAAgAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAA/4QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAERERERERERERAAAAAAAAERAQAAAAAAEBEAEAAAAAEAEQABAAAAEAARAAAQAAEAABEAAAEAEAAAEQAAABEAAAARAAAAEQAAABEAAAEAEAAAEQAAEAABAAARAAEAAAAQABEAEAAAAAEAEQEAAAAAABAREAAAAAAAAREREREREREREAAAAAP/wAAF/6AABv9gAAd+4AAHveAAB9vgAAfn4AAH5+AAB9vgAAe94AAHfuAABv9gAAX/oAAD/8AAAAAAAA"
+      rel="icon"
+      type="image/x-icon"
+    />
+    <script src="https://www.gstatic.com/firebasejs/4.9.0/firebase.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.27.0/moment.min.js" integrity="sha512-rmZcZsyhe0/MAjquhTgiUcb4d9knaFc7b5xAfju483gbEXTkeJRUMIPk6s3ySZMYUHEcjKbjLjyddGWMrNEvZg==" crossorigin="anonymous"></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.7.2/simplepeer.min.js"
+      integrity="sha512-RZlErEuUwWv3EhGNhvni9vinu0QPwNU0OyWAlhTeezEToTZu/C+/Mn7ItRFmpcf8MTK0J2kRalSfzrpQqF7wJQ=="
+      crossorigin="anonymous"
+    ></script>
+    <link rel="stylesheet" type="text/css" href="css/style.css" />
+  </head>
+  <body>
+    <div style="margin: 10px;">
+      <input
+        placeholder="My Username"
+        type="text"
+        class="form-control"
+        id="my-name"
+      />
+    </div>
+    <video id="yourVideo" autoplay muted playsinline></video>
+    <video id="friendsVideo" autoplay playsinline></video>
+    <br />
+    <div style="margin: 10px;">
+      <select style="width: 100%;" class="custom-select" size="3" id="select-friend"> </select>
+    </div>
+    <button id="call-btn" type="button" class="btn btn-primary btn-lg">
+      <span
+        class="glyphicon glyphicon-facetime-video"
+        aria-hidden="true"
+      ></span>
+      Call
+    </button>
+
+    <script id="inits">
+      var config = {
+        apiKey: "AIzaSyBK-q1YVmOhc8YeifwONPX-DoZMEVSEwNw",
+        authDomain: "btest-46bbb.firebaseapp.com",
+        databaseURL: "https://btest-46bbb.firebaseio.com",
+        projectId: "btest-46bbb",
+        storageBucket: "btest-46bbb.appspot.com",
+        messagingSenderId: "771803657075",
+        appId: "1:771803657075:web:268af591ff4a9ee8c3cb06",
+      };
+      firebase.initializeApp(config);
+
+      var database = firebase.database();
+      var servers = {
+        iceServers: [
+          { urls: "stun:stun.services.mozilla.com" },
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun4.l.google.com:19302" },
+          {
+            url: "turn:numb.viagenie.ca",
+            credential: "muazkh",
+            username: "webrtc@live.com",
+          },
+        ],
+      };
+    </script>
+
+    <script id="watch-names">
+      var MYNAME;
+
+      const myNameEl = document.getElementById("my-name");
+      myNameEl.value = localStorage.getItem("__my-name") || "BENNY";
+      MYNAME = myNameEl.value;
+      myNameEl.addEventListener("input", () => {
+        MYNAME = myNameEl.value;
+        localStorage.setItem("__my-name", MYNAME);
+        watchSignalsTo(MYNAME);
+      });
+    </script>
+
+    <script>
+      function askMediaDevices() {
+        return navigator.mediaDevices
+          .getUserMedia({ audio: false, video: { facingMode: "user" } })
+          .then(
+            (stream) =>
+              (document.getElementById("yourVideo").srcObject = stream)
+          )
+          .catch((err) => console.error("askMediaDevices", err));
+      }
+
+      function timeoutAsync(ms) {
+        return new Promise((res) => setTimeout(res, ms));
+      }
+
+      function registerOnChannel() {
+        function refreshUser() {
+          database
+            .ref("active-users/" + MYNAME)
+            .set({ lastActive: new Date().toISOString() });
+        }
+        refreshUser()
+        setTimeout(refreshUser, 10000);
+      }
+      async function subscribeToUsers() {
+        database.ref("active-users").on("value", (snap) => {
+          const val = snap.val();
+          const selectEl = document.getElementById("select-friend");
+          Array.from(selectEl.children).forEach((c) => c.remove());
+          Object.entries(val).filter(([userName]) => userName !== MYNAME).map(([userName, userData]) => {
+            const date = new Date(userData.lastActive);
+            const secondsFromNow = -moment(date).diff(moment(new Date()), 'seconds');
+            if (secondsFromNow > 50) {
+              return;
+            }
+            const dateStr = secondsFromNow + ' seconds ago';
+            const item = document.createElement("option");
+            item.setAttribute("value", userName);
+            item.innerText = userName + " (last seen: " + dateStr + ")";
+            selectEl.appendChild(item);
+          });
+          console.log("-subscribeToUsers", { val });
+        });
+      }
+
+      function sendMySignal(signalObj, friendID) {
+        const path = "client-signal/" + friendID;
+        const doc = {
+          data: signalObj,
+          senderId: MYNAME
+        }
+        console.log('-sendMySignal: ' + path, {signalObj})
+        database.ref(path).set(doc);
+      }
+
+      var peer;
+      async function subscribeToRecieveCall() {
+        database.ref("client-signal/" + MYNAME).remove();
+        database.ref("client-signal/" + MYNAME).on("value", (snap) => {
+          const val = snap.val();
+          if (!val) {
+            return;
+          }
+          const data = val.data;
+          const senderId = val.senderId;
+          console.log("---recieving call!!!", { val });
+          if (!peer) {
+            const videoStream = document.getElementById("yourVideo").srcObject;
+            console.log('creating peer with stream', {videoStream})
+            peer = new SimplePeer({ initiator: false, stream: videoStream });
+            peer.on("signal", function (data) {
+              sendMySignal(data, senderId);
+            });
+            peer.on("stream", function (stream) {
+              console.log("-- recieving stream", { stream });
+              document.getElementById("friendsVideo").srcObject = stream;
+            });
+          }
+          peer.signal(data);
+        });
+      }
+
+      async function makeOnCallListener() {
+        document.getElementById("call-btn").addEventListener("click", () => {
+          const select = document.getElementById("select-friend");
+          const friendID = select.value;
+          console.log(`calling ${friendID}`)
+          if (!peer) {
+            const videoStream = document.getElementById("yourVideo").srcObject;
+            console.log('creating INITIATOR peer with stream', {videoStream})
+            peer = new SimplePeer({ initiator: true, stream: videoStream });
+            peer.on("signal", function (data) {
+              sendMySignal(data, friendID);
+            });
+            peer.on("stream", function (stream) {
+              console.log("-- INITIATOR recieving stream", { stream });
+              document.getElementById("friendsVideo").srcObject = stream;
+            });
+          }
+        });
+      }
+
+      (async function init() {
+        console.log("    my-name: ", MYNAME);
+        await registerOnChannel();
+        await timeoutAsync(50);
+        await subscribeToUsers();
+        await timeoutAsync(50);
+        await subscribeToRecieveCall();
+        await timeoutAsync(50);
+        await makeOnCallListener();
+        await timeoutAsync(50);
+        await askMediaDevices();
+      })();
+    </script>
+  </body>
+</html>
