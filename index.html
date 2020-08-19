@@ -9,7 +9,8 @@
       rel="icon"
       type="image/x-icon"
     />
-    <script src="https://www.gstatic.com/firebasejs/4.9.0/firebase.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.18.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.18.0/firebase-firestore.js"></script>
     <script
       src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.27.0/moment.min.js"
       integrity="sha512-rmZcZsyhe0/MAjquhTgiUcb4d9knaFc7b5xAfju483gbEXTkeJRUMIPk6s3ySZMYUHEcjKbjLjyddGWMrNEvZg=="
@@ -53,17 +54,17 @@
 
     <script id="inits">
       var config = {
-        apiKey: "AIzaSyBK-q1YVmOhc8YeifwONPX-DoZMEVSEwNw",
-        authDomain: "btest-46bbb.firebaseapp.com",
-        databaseURL: "https://btest-46bbb.firebaseio.com",
-        projectId: "btest-46bbb",
-        storageBucket: "btest-46bbb.appspot.com",
-        messagingSenderId: "771803657075",
-        appId: "1:771803657075:web:268af591ff4a9ee8c3cb06",
+        apiKey: "AIzaSyDuN23EYj_S2xzpQDNvJoBxYP2RSqubkKc",
+        authDomain: "jtest-e6387.firebaseapp.com",
+        databaseURL: "https://jtest-e6387.firebaseio.com",
+        projectId: "jtest-e6387",
+        storageBucket: "jtest-e6387.appspot.com",
+        messagingSenderId: "82568155789",
+        appId: "1:82568155789:web:bc3a968132f8bfa17148c4",
       };
       firebase.initializeApp(config);
 
-      var database = firebase.database();
+      var database = firebase.firestore();
       var servers = {
         iceServers: [
           { urls: "stun:stun.services.mozilla.com" },
@@ -80,10 +81,11 @@
 
     <script id="watch-names">
       var MYNAME;
+      var sessionId;
 
       const myNameEl = document.getElementById("my-name");
       const nameFromCache = localStorage.getItem("__my-name");
-      const nameRandom = "BENNY-" + Math.random().toString(32).slice(2, 6);
+      const nameRandom = "USER" + Math.random().toString(32).slice(2, 6);
       myNameEl.value = nameFromCache || nameRandom;
       MYNAME = myNameEl.value;
       myNameEl.addEventListener("input", () => {
@@ -96,7 +98,7 @@
     <script>
       function askMediaDevices() {
         return navigator.mediaDevices
-          .getUserMedia({ audio: false, video: { facingMode: "user" } })
+          .getUserMedia({ audio: true, video: { facingMode: "user" } })
           .then(
             (stream) =>
               (document.getElementById("yourVideo").srcObject = stream)
@@ -111,22 +113,30 @@
       function registerOnChannel() {
         function refreshUser() {
           database
-            .ref("active-users/" + MYNAME)
-            .set({ lastActive: new Date().toISOString() });
+            .collection("active-users")
+            .doc(MYNAME)
+            .set({ lastActive: new Date() });
         }
         refreshUser();
         setTimeout(refreshUser, 10000);
       }
       async function subscribeToUsers() {
-        database.ref("active-users").on("value", (snap) => {
-          const val = snap.val();
+        database.collection("active-users").onSnapshot((snap) => {
+          const users = snap.docs.map(function (doc) {
+            const data = doc.data();
+            const userId = doc.id;
+            const date = new Date(data.lastActive.seconds * 1000);
+            const secondsFromNow = -moment(date).diff(
+              moment(new Date()),
+              "seconds"
+            );
+            return { userId: userId, lastActive: date };
+          });
           const selectEl = document.getElementById("select-friend");
-          Array.from(selectEl.children).forEach((c) => c.remove());
-          Object.entries(val)
-            .filter(([userName]) => userName !== MYNAME)
-            .map(([userName, userData]) => {
-              const date = new Date(userData.lastActive);
-              const secondsFromNow = -moment(date).diff(
+          users
+            .filter((u) => u.userId !== MYNAME)
+            .map((u) => {
+              const secondsFromNow = -moment(u.lastActive).diff(
                 moment(new Date()),
                 "seconds"
               );
@@ -135,55 +145,113 @@
               }
               const dateStr = secondsFromNow + " seconds ago";
               const item = document.createElement("option");
-              item.setAttribute("value", userName);
-              item.innerText = userName + " (last seen: " + dateStr + ")";
+              item.setAttribute("value", u.userId);
+              item.innerText = u.userId + " (last seen: " + dateStr + ")";
               selectEl.appendChild(item);
             });
-          console.log("-subscribeToUsers", { val });
+          console.log("-subscribeToUsers", { users });
         });
       }
 
       function sendMySignal(signalObj, friendID) {
         const path = "client-signal/" + friendID;
-        const doc = {
-          data: signalObj,
-          senderId: MYNAME,
-        };
-        console.log("-sendMySignal: " + path, { signalObj });
-        database.ref(path).set(doc);
+
+        var doc = {};
+        var objType;
+
+        if ("type" in signalObj) {
+          if (signalObj.type === "offer") {
+            doc = {
+              description: { sdp: signalObj.sdp, type: signalObj.type },
+              to: friendID,
+              from: MYNAME,
+              session_id: sessionId,
+              media: "video",
+            };
+            objType = signalObj.type;
+          } else if (signalObj.type === "answer") {
+            doc = {
+              description: { sdp: signalObj.sdp, type: signalObj.type },
+              to: friendID,
+              from: MYNAME,
+              session_id: sessionId,
+            };
+            objType = signalObj.type;
+          } else {
+            return;
+          }
+        } else if ("candidate" in signalObj) {
+          doc = {
+            to: friendID,
+            from: MYNAME,
+            candidate: signalObj.candidate,
+            session_id: sessionId,
+          };
+          objType = "candidate";
+        } else {
+          return;
+        }
+
+        const signalData = { data: doc, type: objType };
+
+        console.log("-sendMySignal: " + path, { signalData });
+        database.collection("client-signal").doc(friendID).set(signalData);
       }
 
       var peer;
       async function subscribeToRecieveCall() {
-        database.ref("client-signal/" + MYNAME).remove();
-        database.ref("client-signal/" + MYNAME).on("value", (snap) => {
-          const val = snap.val();
-          if (!val) {
-            return;
-          }
-          const data = val.data;
-          const senderId = val.senderId;
-          console.log("---recieving call!!!", { val });
-          if (!peer) {
-            const videoStream = document.getElementById("yourVideo").srcObject;
-            console.log("creating peer with stream", { videoStream });
-            peer = new SimplePeer({ initiator: false, stream: videoStream });
-            peer.on("signal", function (data) {
-              sendMySignal(data, senderId);
-            });
-            peer.on("stream", function (stream) {
-              console.log("-- recieving stream", { stream });
-              document.getElementById("friendsVideo").srcObject = stream;
-            });
-          }
-          peer.signal(data);
-        });
+        database.collection("client-signal").doc(MYNAME).delete();
+        database
+          .collection("client-signal")
+          .doc(MYNAME)
+          .onSnapshot(function (doc) {
+            if (!doc.data()) {
+              return;
+            }
+            const docData = doc.data();
+            const data = docData.data;
+            if (!data) {
+              return;
+            }
+            const senderId = data.from;
+            sessionId = data.senderId + "-" + MYNAME;
+
+            console.log("---recieving call!!!", { senderId });
+            if (!peer) {
+              const videoStream = document.getElementById("yourVideo")
+                .srcObject;
+              console.log("creating peer with stream", { videoStream });
+              peer = new SimplePeer({ initiator: false, stream: videoStream });
+              peer.on("signal", function (data) {
+                sendMySignal(data, senderId);
+              });
+              peer.on("stream", function (stream) {
+                console.log("-- recieving stream", { stream });
+                document.getElementById("friendsVideo").srcObject = stream;
+              });
+            }
+            switch (docData.type) {
+              case "offer":
+              case "answer":
+                peer.signal(data.description);
+                break;
+              case "candidate":
+                peer.signal({ candidate: data.candidate });
+                break;
+              case "bye":
+                peer.destroy();
+                peer = null;
+                document.getElementById("friendsVideo").srcObject = null;
+                break;
+            }
+          });
       }
 
       async function makeOnCallListener() {
         document.getElementById("call-btn").addEventListener("click", () => {
           const select = document.getElementById("select-friend");
           const friendID = select.value;
+          sessionId = MYNAME + "-" + friendID;
           console.log(`calling ${friendID}`);
           if (!peer) {
             const videoStream = document.getElementById("yourVideo").srcObject;
